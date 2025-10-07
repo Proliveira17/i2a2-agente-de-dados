@@ -1,5 +1,3 @@
-%%writefile app.py
-
 import os
 import io
 import sys
@@ -205,4 +203,5 @@ def main():
         st.info("⬆️ Faça o upload de um arquivo CSV para começar.")
 
 if __name__ == "__main__":
+
     main()
