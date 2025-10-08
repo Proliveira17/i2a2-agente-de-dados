@@ -1,4 +1,94 @@
+import os
+import io
+import sys
+import traceback
+import time
+import re
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+import google.generativeai as genai
+from google.api_core import exceptions as core_exceptions
 
+# Configuração do Matplotlib para ambiente de servidor
+matplotlib.use("Agg")
+
+def load_css():
+    st.markdown("""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400;700&display=swap');
+        .stApp { background: radial-gradient(circle, rgba(17,22,30,1) 0%, rgba(11,14,20,1) 100%); color: #E5E9F0; font-family: 'Roboto', sans-serif; }
+        .app-title { font-family: 'Orbitron', sans-serif; color: #88C0D0; text-shadow: 0 0 12px rgba(136, 192, 208, 0.6); font-size: 2.8rem; margin-bottom: 0.5rem; }
+        .app-sub { font-family: 'Roboto', sans-serif; color: #B48EAD; font-size: 1.1rem; margin-bottom: 2rem; font-weight: 300; }
+        [data-testid="stSidebar"], [data-testid="stChatMessage"], [data-testid="stFileUploader"], .stExpander, [data-testid="stTextInput"] { background: rgba(46, 52, 64, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(76, 86, 106, 0.4); border-radius: 12px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2); margin-bottom: 15px; }
+        .stChatMessage:has([data-testid="chat-avatar-user"]) { background-color: rgba(94, 129, 172, 0.3); border-left: 5px solid #88C0D0; }
+        .stChatMessage:has([data-testid="chat-avatar-assistant"]) { background-color: rgba(67, 76, 94, 0.3); border-left: 5px solid #B48EAD; }
+    </style>
+    """, unsafe_allow_html=True)
+
+class PandasAgent:
+    def __init__(self, df: pd.DataFrame, llm: genai.GenerativeModel, max_retries: int = 2):
+        self.df, self.llm, self.max_retries = df, llm, max_retries
+        self.df_context = self._build_dataframe_context()
+
+    def _build_dataframe_context(self) -> str:
+        buffer = io.StringIO()
+        self.df.info(buf=buffer, verbose=False)
+        mem_usage = buffer.getvalue().split('\n')[-2]
+        return f"O DataFrame 'df' tem {self.df.shape[0]} linhas e {self.df.shape[1]} colunas.\nNomes das colunas e tipos de dados: {self.df.dtypes.to_dict()}\nUso de memória: {mem_usage}\nPrimeiras 5 linhas:\n{self.df.head().to_string()}"
+
+    def _get_router_prompt(self, user_query: str) -> str:
+        return f"""
+        Sua tarefa é classificar a pergunta de um usuário em UMA das três categorias abaixo. Responda APENAS com o nome da categoria.
+        CATEGORIAS:
+        1. `dataframe_query`: A pergunta é sobre os dados no arquivo CSV.
+        2. `agent_capabilities_query`: A pergunta é sobre o que você, o agente, pode fazer.
+        3. `general_knowledge`: A pergunta é um conhecimento geral.
+        EXEMPLOS:
+        - Pergunta: 'qual a média de valor FOB por mês?' -> Resposta: dataframe_query
+        - Pergunta: 'o que vc pode fazer?' -> Resposta: agent_capabilities_query
+        - Pergunta: 'quem descobriu o brasil?' -> Resposta: general_knowledge
+        ---
+        Pergunta a ser classificada: '{user_query}'
+        Resposta:
+        """
+
+    # MELHORIA 1: CONTEXTO DE HISTÓRICO MELHORADO
+    # O prompt agora formata o histórico de forma muito mais rica, incluindo o código gerado anteriormente.
+    def _get_codegen_prompt(self, user_query: str, chat_history: list, error_context: dict = None) -> str:
+        history_parts = []
+        for msg in chat_history[-4:]:
+            if msg['role'] == 'user':
+                history_parts.append(f"Usuário: {msg['content']}")
+            elif msg['role'] == 'assistant':
+                assistant_response = f"Assistente (Texto): {msg['content']}"
+                if 'code' in msg and msg['code']:
+                    assistant_response += f"\nAssistente (Código Gerado):\n```python\n{msg['code']}\n```"
+                history_parts.append(assistant_response)
+        history_str = "\n---\n".join(history_parts)
+
+        error_section = ""
+        if error_context:
+            error_section = f"ATENÇÃO: A última tentativa de gerar código falhou. Analise o erro para corrigi-lo.\n<codigo_anterior>\n{error_context['code']}\n</codigo_anterior>\n<mensagem_erro>\n{error_context['error']}\n</mensagem_erro>"
+
+        return f"""Você é um expert em análise de dados com Python e Pandas. Sua tarefa é gerar um código Python para responder à pergunta do usuário, utilizando o DataFrame `df`.
+
+<contexto_dataframe>
+{self.df_context}
+</contexto_dataframe>
+
+<historico_conversa>
+{history_str}
+</historico_conversa>
+
+<pergunta_usuario_atual>
+{user_query}
+</pergunta_usuario_atual>
+
+{error_section}
 
 REGRAS IMPORTANTES:
 1.  Gere APENAS o código Python necessário para responder à pergunta. Não inclua texto explicativo, comentários desnecessários ou a palavra "python" no início.
@@ -8,7 +98,7 @@ REGRAS IMPORTANTES:
 5.  Se a pergunta for complexa, quebre o problema em etapas no seu código.
 
 Gere o código Python agora.
-
+"""
 
     def _get_summarizer_prompt(self, user_query: str, result: str) -> str:
         return (f"Você é um assistente de análise de dados. A pergunta do usuário foi: '{user_query}'.\nO código executado produziu o seguinte resultado: '{result}'.\n\nExplique este resultado para o usuário de forma clara, objetiva e em português.")
@@ -266,4 +356,5 @@ def main():
         st.info("⬆️ Faça o upload de um arquivo CSV na barra lateral para começar a análise.")
 if __name__ == "__main__":
     main()
+
 
