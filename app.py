@@ -8,7 +8,7 @@ REGRAS IMPORTANTES:
 5.  Se a pergunta for complexa, quebre o problema em etapas no seu código.
 
 Gere o código Python agora.
-"""
+
 
     def _get_summarizer_prompt(self, user_query: str, result: str) -> str:
         return (f"Você é um assistente de análise de dados. A pergunta do usuário foi: '{user_query}'.\nO código executado produziu o seguinte resultado: '{result}'.\n\nExplique este resultado para o usuário de forma clara, objetiva e em português.")
@@ -266,3 +266,4 @@ def main():
         st.info("⬆️ Faça o upload de um arquivo CSV na barra lateral para começar a análise.")
 if __name__ == "__main__":
     main()
+
